@@ -431,7 +431,18 @@ export async function runRendererRuntimeTest(assetRoot) {
   assert.match(css, /main:is\(\.main-surface, \[data-app-shell-main-surface\], \[class\*=\"_MainContentSurface_\"\]\):has\(\[role="main"\]\)/);
   assert.match(css, /main:is\(\.main-surface, \[data-app-shell-main-surface\], \[class\*=\"_MainContentSurface_\"\]\):not\(:has\(\[role="main"\]\)\)/);
   assert.match(css, /header:is\(\.app-header-tint, \[data-app-shell-header-edge-scroll\], \[class\*=\"_Header_\"\]\)/);
-  assert.match(css, /:is\(\.app-shell-main-content-top-fade, \[data-app-shell-main-content-top-fade\], \[class\*=\"_MainContentTopFade_\"\]\)/);
+  assert.match(
+    css,
+    /:is\(\.app-shell-main-content-top-fade, \[data-app-shell-main-content-top-fade\], \[class\*=\"_MainContentTopFade_\"\]\):not\(\[data-app-shell-main-content-top-fade\]\)/,
+    "The 26.924 data attribute may identify the fade contract, but its content wrapper must be excluded from the hide rule.",
+  );
+  assert.match(css, /body > div > \[class\*="_PageSurfaceLayout_"\] \{\s*background: transparent !important;/,
+    "The 26.924 outer page surface must not wash out the selected artwork.");
+  assert.match(css,
+    /> div:first-child:not\(\[class~="group\/home-composer-layout"\]\) > div:first-child \{\s*flex: 0 0 440px !important;/,
+    "Legacy Home sizing must exclude the 26.924 composer layout.");
+  assert.doesNotMatch(css, /:has\(\[data-testid="home-icon"\]\) > div:first-child(?:\s|>)/,
+    "Unguarded positional Home selectors can target the live 26.924 composer layout.");
   assert.doesNotMatch(css, /:has\([^()]*:has\(/);
   assert.doesNotMatch(
     css,
@@ -712,6 +723,15 @@ export async function runRendererRuntimeTest(assetRoot) {
   vm.runInNewContext(full.payloadFor({ art: { taskMode: "full" } }), full.context);
   assert.equal(full.attrs.get("data-dream-task-mode"), "full");
   assert.equal(full.attrs.get("data-dream-art-task-mode"), "full");
+  assert.equal(full.attrs.get("data-dream-idle-composer"), "opaque",
+    "Themes without an idleComposer setting must keep the composer opaque.");
+
+  const transparentComposer = makeFixture({ nativeAppearance: "light" });
+  vm.runInNewContext(transparentComposer.payloadFor({ art: { idleComposer: "transparent" } }),
+    transparentComposer.context);
+  assert.equal(transparentComposer.attrs.get("data-dream-idle-composer"), "transparent");
+  assert.match(css, /data-dream-idle-composer="transparent"[^{}]*:not\(:focus-within\)\s*\{\s*--ds-theme-color-panel-alt:\s*transparent !important;/,
+    "Only an opted-in idle composer may become transparent.");
 
   const landscape = makeFixture({ nativeAppearance: "dark" });
   vm.runInNewContext(landscape.payloadFor({

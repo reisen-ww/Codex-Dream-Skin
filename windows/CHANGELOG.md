@@ -1,5 +1,21 @@
 # Windows Changelog
 
+## 1.5.19
+
+- 同步 Codex 26.924.22138 的共享渲染选择器和 CSS 修复；Windows 原生窗口仍需对应平台实机验收。
+- 同步任务页底部渐变与输入框背景的共享 CSS 调整：宽图任务页默认不透明，主题可用 `art.idleComposer: "transparent"` 选择未聚焦透明；Windows 全屏视觉效果仍需实机验收。
+
+### 安全
+
+- injector 与托盘清理现在会解析完整命令行参数，只接受 Dream Skin 自己生成的独立参数；脚本路径、--watch、端口或 Browser ID 仅作为其他参数中的文本出现时，不再被当作进程身份依据。
+- Restore 只会终止以真实 PowerShell -File 模式运行受管托盘脚本的进程；无法枚举、停止或确认退出时会保留 state 并中止恢复，不再把失败降级成警告后继续修改配置。
+
+### 修复
+
+- 修复 Windows 11 重启后托盘仍在运行、但 injector watcher 已退出时皮肤不再自动恢复的问题（#231）：托盘现在会在已验证的官方 Codex 新 Browser 会话出现后，仅通过既有启动流程恢复 watcher；恢复不会重启 Codex、解除暂停或重复写入外观配置。
+- 修复 Codex 26.924 及以上版本中，移除原生顶部渐变的规则误伤滚动容器、导致主区对话列与原生输入框整体消失的问题（#415）：自 26.924 起 `data-app-shell-main-content-top-fade` 落在承载对话列与 composer 的滚动容器上，原来的 `display: none` 会连带折叠整列，管理端自检因此报「原生输入框不可见」。规则现在排除该属性宿主，只隐藏真正的渐变层（`[class*="_MainContentTopFade_"]`）。
+- 保留 Codex 26.924 适配与 #418/#420 的窄范围路由、顶部渐变修复；Windows 26.924 原生窗口仍需实机验收。
+
 ## 1.5.18
 
 - 同步首页建议卡新旧文字类的共享主题色规则；macOS 26.901.41123 提供实际类名证据，Windows 原生表现仍由对应平台验收。
@@ -7,19 +23,12 @@
 
 ## Unreleased
 
-### 安全
-
-- injector 与托盘清理现在会解析完整命令行参数，只接受 Dream Skin 自己生成的独立参数；脚本路径、--watch、端口或 Browser ID 仅作为其他参数中的文本出现时，不再被当作进程身份依据。
-- Restore 只会终止以真实 PowerShell -File 模式运行受管托盘脚本的进程；无法枚举、停止或确认退出时会保留 state 并中止恢复，不再把失败降级成警告后继续修改配置。
-
 ### 新增
 
 - 托盘新增 System / English / 中文语言选择，选择会持久保存，并覆盖状态、主题操作、更新、恢复/卸载和一键换肤流程；System 会根据系统 UI 语言自动选择中文或英文（#351）。
 
 ### 修复
 
-- 修复 Windows 11 重启后托盘仍在运行、但 injector watcher 已退出时皮肤不再自动恢复的问题（#231）：托盘现在会在已验证的官方 Codex 新 Browser 会话出现后，仅通过既有启动流程恢复 watcher；恢复不会重启 Codex、解除暂停或重复写入外观配置。
-- 修复 Codex 26.924 及以上版本中，移除原生顶部渐变的规则误伤滚动容器、导致主区对话列与原生输入框整体消失的问题（#415）：自 26.924 起 `data-app-shell-main-content-top-fade` 落在承载对话列与 composer 的滚动容器上，原来的 `display: none` 会连带折叠整列，管理端自检因此报「原生输入框不可见」。规则现在排除该属性宿主，只隐藏真正的渐变层（`[class*="_MainContentTopFade_"]`）。
 - 保留 Codex 自定义界面字体和代码字体，基础皮肤不再强制覆盖 body 字体（#399）。
 - 完整补齐 Codex 26.818 主题兼容（#373，感谢 @QingYe-05 的 Windows 实机源码证据）：托盘“更换背景图”现在保留当前 `theme.json`、颜色、构图参数和已验证的 `theme.css`；共享 renderer 同时清除 sticky composer 的两层原生渐变、约束 Markdown 宽表、映射真实用户气泡，并改善流式思考、命令详情、新版动作按钮、横向壁纸和顶部栏的可读性；固定品牌/状态伪文案不再覆盖原生界面。
 - 修复新版 Codex 把输入框壳迁移到 `_ComposerLayoutRoot_` 后，Dream Skin 误把 `_ComposerLayoutFooter_` 标记为 composer、导致主题输入框样式只落在底部工具栏的问题；同时排除 `/avatar-overlay` 与 Pet composition surface，并在发现旧注入时执行移除与验证，避免主题壁纸污染透明 Pet 窗口形成矩形背景。
