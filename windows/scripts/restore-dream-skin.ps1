@@ -103,7 +103,7 @@ try {
 
   $restoreError = $null
   try {
-    Stop-DreamSkinTrayProcess
+    Stop-DreamSkinTrayProcess -ScriptPaths @((Join-Path $PSScriptRoot 'tray-dream-skin.ps1'))
     if ($shouldCloseCodex) {
       Stop-DreamSkinCodex -Codex $codex -AllowForce:$forceAuthorized
       if ($portOwnedByCodex -and -not (Wait-DreamSkinPortAvailable -Port $Port -TimeoutSeconds 5)) {

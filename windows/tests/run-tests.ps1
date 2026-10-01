@@ -753,10 +753,40 @@ try {
       throw 'Accepted an inconsistent CDP page target.'
     }
   }
-  $watchCommand = '"C:\Program Files\nodejs\node.exe" "C:\Dream Skin\injector.mjs" --watch --port 9335 --browser-id browser-123'
-  if (-not (Test-DreamSkinCommandLineToken -CommandLine $watchCommand -Token 'C:\Dream Skin\injector.mjs') -or
-    (Test-DreamSkinCommandLineToken -CommandLine $watchCommand -Token 'Dream Skin\injector.mjs')) {
-    throw 'Injector command-line token validation is not boundary-safe.'
+  $injectorPath = 'C:\Dream Skin\engine\scripts\injector.mjs'
+  $validInjectorCommand = '"C:\Program Files\nodejs\node.exe" "C:\Dream Skin\engine\scripts\injector.mjs" --watch --port 9335 --browser-id browser-1 --theme-dir "C:\Dream Skin\active-theme" --pause-file "C:\Dream Skin\paused"'
+  $embeddedInjectorCommand = '"C:\Program Files\nodejs\node.exe" "harmless C:\Dream Skin\engine\scripts\injector.mjs --watch --port 9335 --browser-id browser-1 text"'
+  if (-not (Test-DreamSkinInjectorCommandLine -CommandLine $validInjectorCommand `
+        -InjectorPath $injectorPath -Port 9335 -BrowserId 'browser-1')) {
+    throw 'Rejected the exact Dream Skin injector command line.'
+  }
+  if (Test-DreamSkinInjectorCommandLine -CommandLine $embeddedInjectorCommand `
+      -InjectorPath $injectorPath -Port 9335 -BrowserId 'browser-1') {
+    throw 'Accepted injector identity text embedded inside an unrelated argument.'
+  }
+  $duplicateInjectorCommand = $validInjectorCommand + ' --port 9335'
+  if (Test-DreamSkinInjectorCommandLine -CommandLine $duplicateInjectorCommand `
+      -InjectorPath $injectorPath -Port 9335 -BrowserId 'browser-1') {
+    throw 'Accepted duplicate injector identity options.'
+  }
+  $malformedInjectorCommand = '"C:\Program Files\nodejs\node.exe" "C:\Dream Skin\engine\scripts\injector.mjs --watch --port 9335 --browser-id browser-1'
+  if (Test-DreamSkinInjectorCommandLine -CommandLine $malformedInjectorCommand `
+      -InjectorPath $injectorPath -Port 9335 -BrowserId 'browser-1') {
+    throw 'Accepted an unclosed quoted injector command line.'
+  }
+
+  $trayPath = 'C:\Dream Skin\engine\scripts\tray-dream-skin.ps1'
+  $validTrayCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Dream Skin\engine\scripts\tray-dream-skin.ps1" -Port 9335'
+  $embeddedTrayCommand = 'powershell.exe -NoProfile -Command "Write-Output C:\Dream Skin\engine\scripts\tray-dream-skin.ps1"'
+  if (-not (Test-DreamSkinPowerShellFileCommandLine -CommandLine $validTrayCommand -ScriptPath $trayPath)) {
+    throw 'Rejected the exact Dream Skin tray -File command line.'
+  }
+  if (Test-DreamSkinPowerShellFileCommandLine -CommandLine $embeddedTrayCommand -ScriptPath $trayPath) {
+    throw 'Accepted tray script text that was not the PowerShell -File argument.'
+  }
+  $commandModeTraySpoof = 'powershell.exe -NoProfile -Command Write-Output -File "C:\Dream Skin\engine\scripts\tray-dream-skin.ps1"'
+  if (Test-DreamSkinPowerShellFileCommandLine -CommandLine $commandModeTraySpoof -ScriptPath $trayPath) {
+    throw 'Accepted a tray path following PowerShell command mode as a -File selector.'
   }
   $forwardedDebugProcess = [pscustomobject]@{
     CommandLine = '"C:\Program Files\WindowsApps\OpenAI.Codex\app\ChatGPT.exe" --remote-debugging-port=9335'
@@ -1415,8 +1445,14 @@ try {
     $emptyMenu.Dispose()
   }
   $restoreSource = Read-DreamSkinUtf8File -Path (Join-Path $Root 'scripts\restore-dream-skin.ps1')
-  if (-not $restoreSource.Contains('Stop-DreamSkinTrayProcess')) {
-    throw 'Complete restore does not stop a separately launched tray process.'
+  $commonSource = Read-DreamSkinUtf8File -Path (Join-Path $Root 'scripts\common-windows.ps1')
+  if (-not $restoreSource.Contains('Stop-DreamSkinTrayProcess -ScriptPaths') -or
+      $restoreSource.Contains('function Stop-DreamSkinTrayProcess')) {
+    throw 'Complete restore does not use the shared tray cleanup contract.'
+  }
+  if (-not $commonSource.Contains('Test-DreamSkinPowerShellFileCommandLine') -or
+      $commonSource.Contains('$process.CommandLine.IndexOf($scriptPath')) {
+    throw 'Shared tray cleanup does not require exact, fail-closed PowerShell -File identity.'
   }
   if ($restoreSource.Contains('Start-Process -FilePath $relaunchCodex.Executable') -or
     -not $restoreSource.Contains('Start-DreamSkinCodex -Codex $relaunchCodex')) {
@@ -1524,6 +1560,8 @@ try {
   & (Join-Path $PSScriptRoot 'start-renderer-readiness.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'start-verified-skin-preserved.tests.ps1') -Root $Root
   $projectRoot = Split-Path -Parent $Root
+  & (Join-Path $PSScriptRoot 'reopen-recovery.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'start-recover-existing.tests.ps1') -Root $Root
   $syncToolPath = Join-Path $projectRoot 'tools\sync-runtime-assets.mjs'
   $syncToolResult = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @($syncToolPath, '--check')
   if ($syncToolResult.ExitCode -ne 0) {
