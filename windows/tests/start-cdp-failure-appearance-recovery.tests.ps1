@@ -137,7 +137,7 @@ try {
     throw 'A failed CDP launch did not close Codex, restore appearance, then reopen normally.'
   }
 
-  foreach ($category in @('cdp-direct-access-denied', 'cdp-endpoint-unavailable')) {
+  foreach ($category in @('cdp-unsupported', 'cdp-direct-access-denied', 'cdp-endpoint-unavailable')) {
     $script:events = @()
     $script:lockExited = $false
     $script:installCalls = 0

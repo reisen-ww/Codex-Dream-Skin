@@ -321,6 +321,7 @@ function Get-DreamSkinCommunityStartFailureMessage {
     [Parameter(Mandatory = $true)][string]$AppearanceRecovery
   )
   $messageKey = switch ($Category) {
+    'cdp-unsupported' { 'CommunityStartCdpUnsupported' }
     'cdp-launch-failed' { 'CommunityStartCdpLaunchFailed' }
     'cdp-direct-access-denied' { 'CommunityStartCdpDirectAccessDenied' }
     'cdp-endpoint-unavailable' { 'CommunityStartCdpEndpointUnavailable' }

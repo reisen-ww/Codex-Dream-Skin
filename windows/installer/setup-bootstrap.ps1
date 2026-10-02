@@ -63,6 +63,7 @@ try {
   }
   . $commonPath
   . $themePath
+  if (-not $Uninstall) { Assert-DreamSkinWindows11 }
 
   $engine = Get-DreamSkinRuntimeEnginePaths -StateRoot $stateRoot
   if ($Uninstall) {
@@ -142,8 +143,15 @@ try {
     -not (Test-Path -LiteralPath (Join-Path $engine.Root $_) -PathType Leaf)
   })
   $engineComplete = $missingEngineFiles.Count -eq 0
+  $disabled = Test-DreamSkinDisabled -StateRoot $stateRoot
   $needsInstall = $Install -or $payloadVersion -cne $installedVersion -or
     -not $backupExists -or -not $engineComplete
+  if (-not $Install -and $disabled) {
+    if (-not $engineComplete) {
+      throw 'Dream Skin is disabled after restoring the base theme, but its managed engine is incomplete. Run the installer explicitly to repair it.'
+    }
+    $needsInstall = $false
+  }
 
   if ($needsInstall) {
     Wait-DreamSkinCodexClosedForSetup

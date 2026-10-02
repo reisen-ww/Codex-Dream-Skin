@@ -1,5 +1,13 @@
 # Windows Changelog
 
+## 1.5.20
+
+- 当官方包激活启动了可读主进程、但没有保留 CDP 参数且没有可信 listener 时，启动器现在立即安全回滚；只有明确出现 `codex://` 参数重定向证据才允许诊断性裸可执行文件回退，避免新版 Codex 长时间等待后重复尝试不安全路径。
+- 适配 Codex 26.928.4866.0 的顶部渐变宿主：保留承载对话列和输入框的滚动容器布局，同时清除宿主和真正渐变层的背景，避免新版本把整列内容折叠。
+- 新增被动官方 Codex 启动监控：托盘默认随用户登录启动，识别唯一的官方 Store 主进程，排除 renderer、GPU 和 utility 子进程，并用 PID、启动时间和包身份校验；普通 Codex 启动只记录并放行，不添加 `-RestartExisting`、不关闭或重启，只有 Dream Skin 启动意图或已经存在可信 CDP 端点时才允许复用现有接管与注入流程。
+- 多个 Store 版本同时运行、无可用主题、已暂停、旧/不完整状态或 blocked 状态都会保持关闭自动接管；托盘新增开关，并支持 -DisableOfficialLaunchMonitor、-EnableOfficialLaunchMonitor 和 -NoAutoAttach 别名。
+- Windows session state 升级为 schema 4，记录会话、官方主进程、CDP listener 和启动来源；用户已确认 Windows 11 与 Codex 26.928.4866.0 实机加载成功。
+
 ## 1.5.19
 
 - 同步 Codex 26.924.22138 的共享渲染选择器和 CSS 修复；Windows 原生窗口仍需对应平台实机验收。
@@ -13,7 +21,7 @@
 ### 修复
 
 - 修复 Windows 11 重启后托盘仍在运行、但 injector watcher 已退出时皮肤不再自动恢复的问题（#231）：托盘现在会在已验证的官方 Codex 新 Browser 会话出现后，仅通过既有启动流程恢复 watcher；恢复不会重启 Codex、解除暂停或重复写入外观配置。
-- 修复 Codex 26.924 及以上版本中，移除原生顶部渐变的规则误伤滚动容器、导致主区对话列与原生输入框整体消失的问题（#415）：自 26.924 起 `data-app-shell-main-content-top-fade` 落在承载对话列与 composer 的滚动容器上，原来的 `display: none` 会连带折叠整列，管理端自检因此报「原生输入框不可见」。规则现在排除该属性宿主，只隐藏真正的渐变层（`[class*="_MainContentTopFade_"]`）。
+- 修复 Codex 26.924 及以上版本中，移除原生顶部渐变的规则误伤滚动容器、导致主区对话列与原生输入框整体消失的问题（#415）：自 26.924 起 `data-app-shell-main-content-top-fade` 落在承载对话列与 composer 的滚动容器上，原来的 `display: none` 会连带折叠整列，管理端自检因此报「原生输入框不可见」。规则现在保留属性宿主的布局，只清除宿主和真正渐变层（`[class*="_MainContentTopFade_"]`）的背景。
 - 保留 Codex 26.924 适配与 #418/#420 的窄范围路由、顶部渐变修复；Windows 26.924 原生窗口仍需实机验收。
 
 ## 1.5.18

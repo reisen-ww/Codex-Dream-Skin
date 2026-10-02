@@ -6,9 +6,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PortExplicit = $PSBoundParameters.ContainsKey('Port')
+$PortFromState = $false
 $SkillRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'common-windows.ps1')
 . (Join-Path $PSScriptRoot 'theme-windows.ps1')
+Assert-DreamSkinWindows11
 
 $operationLock = Enter-DreamSkinOperationLock
 try {
@@ -29,6 +31,11 @@ try {
   Ensure-DreamSkinManagedDirectory -Path $themePaths.Root -Root $themePaths.Root
   $StatePath = Join-Path $StateRoot 'state.json'
   $existingState = Read-DreamSkinState -Path $StatePath
+  if (-not $PortExplicit -and $null -ne $existingState -and $existingState.port) {
+    $Port = [int]$existingState.port
+    Assert-DreamSkinPort -Port $Port
+    $PortFromState = $true
+  }
   $savedPathCandidate = Get-DreamSkinCodexStatePathCandidate -State $existingState
   $savedCodex = Resolve-DreamSkinCodexInstallFromState -State $existingState -RegisteredInstalls $registeredInstalls
   if ($null -ne $savedPathCandidate -and $null -eq $savedCodex -and
@@ -53,7 +60,7 @@ try {
     $startScript = $engine.Start
     $restoreScript = $engine.Restore
     $trayScript = $engine.Tray
-    $portArgument = if ($PortExplicit) { " -Port $Port" } else { '' }
+    $portArgument = if ($PortExplicit -or $PortFromState) { " -Port $Port" } else { '' }
 
     foreach ($folder in @($desktop, $startMenu)) {
       $shortcut = $shell.CreateShortcut((Join-Path $folder 'Codex Dream Skin.lnk'))
@@ -79,11 +86,25 @@ try {
       $tray.Description = 'Open Codex Dream Skin status and theme controls in the system tray'
       $tray.Save()
     }
+
+    $startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Dream Skin.lnk'
+    if (Test-DreamSkinAutoStartDisabled -StateRoot $StateRoot) {
+      Remove-Item -LiteralPath $startupPath -Force -ErrorAction SilentlyContinue
+    } else {
+      $startup = $shell.CreateShortcut($startupPath)
+      $startup.TargetPath = $powershell
+      $startup.Arguments = "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File `"$trayScript`"$portArgument"
+      $startup.WorkingDirectory = $engine.Root
+      $startup.Description = 'Start Codex Dream Skin monitoring when the user signs in'
+      $startup.Save()
+    }
+
     Start-Process -FilePath $powershell -ArgumentList `
       "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File `"$trayScript`"$portArgument" `
       -WindowStyle Hidden | Out-Null
   }
 
+  Set-DreamSkinDisabled -Disabled $false -StateRoot $StateRoot
   if ($NoShortcuts) {
     Write-Host "Codex Dream Skin base theme installed at $($engine.Root). Run $($engine.Start) to launch it."
   } else {

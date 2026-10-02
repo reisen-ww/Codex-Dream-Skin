@@ -48,7 +48,7 @@ ChangesAssociations=yes
 ChangesEnvironment=no
 UsePreviousTasks=yes
 SetupLogging=yes
-MinVersion=10.0
+MinVersion=10.0.22000
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -59,7 +59,7 @@ english.ConfirmUninstall=Uninstall will close Codex, restore its original appear
 chinesesimplified.ConfirmUninstall=卸载将关闭 Codex、恢复官方外观并移除 Dream Skin 运行时；已保存主题和图片会保留。%n%n是否继续？
 
 [Tasks]
-Name: "startup"; Description: "Start Codex Dream Skin when I sign in"; GroupDescription: "Additional options:"; Flags: unchecked
+Name: "startup"; Description: "Start Codex Dream Skin when I sign in"; GroupDescription: "Additional options:"
 
 [Files]
 ; Keep a second, temporary copy so initialization runs before Inno starts
@@ -73,7 +73,7 @@ Source: "{#StageRoot}\NOTICE.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageRoot}\payload\*"; DestDir: "{app}\payload"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Codex Dream Skin"; Filename: "{#PersistentPowerShellPath}"; Parameters: "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File ""{app}\setup-bootstrap.ps1"" -LaunchTray"; WorkingDir: "{app}"; IconFilename: "{app}\payload\assets\codex-dream-skin.ico"
+Name: "{group}\Codex Dream Skin"; Filename: "{#PersistentPowerShellPath}"; Parameters: "-NoProfile -ExecutionPolicy RemoteSigned -File ""{localappdata}\CodexDreamSkin\engine\scripts\start-dream-skin.ps1"" -PromptRestart"; WorkingDir: "{app}"; IconFilename: "{app}\payload\assets\codex-dream-skin.ico"
 Name: "{userstartup}\Codex Dream Skin"; Filename: "{#PersistentPowerShellPath}"; Parameters: "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File ""{app}\setup-bootstrap.ps1"" -LaunchTray"; WorkingDir: "{app}"; IconFilename: "{app}\payload\assets\codex-dream-skin.ico"; Tasks: startup
 
 [Registry]
@@ -83,7 +83,7 @@ Root: HKCU; Subkey: "Software\Classes\dreamskin\DefaultIcon"; ValueType: string;
 Root: HKCU; Subkey: "Software\Classes\dreamskin\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{#PersistentPowerShellPath}"" -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File ""{localappdata}\CodexDreamSkin\engine\scripts\apply-community-theme.ps1"" ""%1"""
 
 [Run]
-Filename: "{#PowerShellPath}"; Parameters: "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File ""{app}\setup-bootstrap.ps1"" -LaunchTray"; WorkingDir: "{app}"; Description: "Launch Codex Dream Skin"; Flags: nowait postinstall skipifsilent
+Filename: "{#PowerShellPath}"; Parameters: "-NoProfile -ExecutionPolicy RemoteSigned -File ""{localappdata}\CodexDreamSkin\engine\scripts\start-dream-skin.ps1"" -PromptRestart"; WorkingDir: "{app}"; Description: "Launch Codex Dream Skin"; Flags: nowait postinstall skipifsilent
 
 [Code]
 function PowerShellArguments(

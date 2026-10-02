@@ -14,6 +14,7 @@ $PortExplicit = $PSBoundParameters.ContainsKey('Port')
 . (Join-Path $PSScriptRoot 'common-windows.ps1')
 . (Join-Path $PSScriptRoot 'theme-windows.ps1')
 . (Join-Path $PSScriptRoot 'localization-windows.ps1')
+if (-not $Uninstall) { Assert-DreamSkinWindows11 }
 
 $operationLock = Enter-DreamSkinOperationLock
 try {
@@ -103,7 +104,11 @@ try {
 
   $restoreError = $null
   try {
-    Stop-DreamSkinTrayProcess -ScriptPaths @((Join-Path $PSScriptRoot 'tray-dream-skin.ps1'))
+    $enginePaths = Get-DreamSkinRuntimeEnginePaths -StateRoot $StateRoot
+    Stop-DreamSkinTrayProcess -ScriptPaths @(
+      (Join-Path $PSScriptRoot 'tray-dream-skin.ps1'),
+      $enginePaths.Tray
+    ) -RequireStopped
     if ($shouldCloseCodex) {
       Stop-DreamSkinCodex -Codex $codex -AllowForce:$forceAuthorized
       if ($portOwnedByCodex -and -not (Wait-DreamSkinPortAvailable -Port $Port -TimeoutSeconds 5)) {
@@ -134,15 +139,18 @@ try {
 
     Remove-Item -LiteralPath $StatePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath (Join-Path $StateRoot 'paused') -Force -ErrorAction SilentlyContinue
+    Set-DreamSkinDisabled -Disabled $true -StateRoot $StateRoot
     if ($Uninstall) {
       $desktop = [Environment]::GetFolderPath('Desktop')
       $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+      $startup = [Environment]::GetFolderPath('Startup')
       @(
         (Join-Path $desktop 'Codex Dream Skin.lnk'),
         (Join-Path $desktop 'Codex Dream Skin - Restore.lnk'),
         (Join-Path $desktop 'Codex Dream Skin - Tray.lnk'),
         (Join-Path $startMenu 'Codex Dream Skin.lnk'),
-        (Join-Path $startMenu 'Codex Dream Skin - Tray.lnk')
+        (Join-Path $startMenu 'Codex Dream Skin - Tray.lnk'),
+        (Join-Path $startup 'Codex Dream Skin.lnk')
       ) | ForEach-Object { Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue }
     }
 

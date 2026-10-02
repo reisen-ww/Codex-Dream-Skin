@@ -56,11 +56,12 @@ if ($definition.Contains('ssPostInstall')) {
 foreach ($requiredDefinition in @(
   'PrivilegesRequired=lowest',
   'ArchitecturesAllowed=x64compatible',
+  'MinVersion=10.0.22000',
   'ChangesAssociations=yes',
   'OutputBaseFilename=CodexDreamSkin-Setup-v{#AppVersion}',
   'Source: "{#StageRoot}\payload\*"',
   'DestDir: "{app}\payload"',
-  'Flags: unchecked',
+  'Name: "startup"; Description: "Start Codex Dream Skin when I sign in"; GroupDescription: "Additional options:"',
   'Flags: nowait postinstall skipifsilent',
   'english.ConfirmUninstall=Uninstall will close Codex',
   'Name: "chinesesimplified"; MessagesFile: "{#StageRoot}\languages\ChineseSimplified.isl"',
@@ -132,8 +133,8 @@ if ($uninstallStepIndex -lt 0 -or $runBootstrapIndex -le $uninstallStepIndex -or
   throw 'Uninstall restoration must run after confirmation and abort before file deletion on failure.'
 }
 if ([regex]::Matches($definition, '(?m)^Name: "startup";').Count -ne 1 -or
-  [regex]::Matches($definition, '(?m)^Name: "startup";[^\r\n]*Flags: unchecked\r?$').Count -ne 1) {
-  throw 'The installer startup task must exist exactly once and remain unchecked by default.'
+  [regex]::Matches($definition, '(?m)^Name: "startup";[^\r\n]*Flags: unchecked\r?$').Count -ne 0) {
+  throw 'The installer startup task must exist exactly once and be enabled by default.'
 }
 $fileSources = [regex]::Matches($definition, '(?m)^Source: .*$')
 if ($fileSources.Count -ne 6 -or

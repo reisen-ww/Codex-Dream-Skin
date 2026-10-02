@@ -304,7 +304,7 @@ try {
       throw "Installer shortcut still depends on its source checkout: $requiredShortcutBinding"
     }
   }
-  if ([regex]::Matches($installSource, '-ExecutionPolicy RemoteSigned').Count -ne 4 -or
+  if ([regex]::Matches($installSource, '-ExecutionPolicy RemoteSigned').Count -ne 5 -or
     $installSource.Contains('-ExecutionPolicy Bypass')) {
     throw 'Installer shortcuts or tray launch still bypass the PowerShell execution policy.'
   }
@@ -935,7 +935,8 @@ try {
     'Wait-DreamSkinCodexDebugArgumentStatus',
     'Start-DreamSkinCodexDirect',
     'Stop-DreamSkinCodex',
-    'Get-DreamSkinCodexProcesses'
+    'Get-DreamSkinCodexProcesses',
+    'Get-DreamSkinVerifiedCdpIdentity'
   )
   $originalLauncherFunctions = @{}
   foreach ($functionName in $launcherFunctionNames) {
@@ -947,6 +948,10 @@ try {
     Set-Item 'function:Start-DreamSkinCodexDirect' -Value { throw 'Direct fallback must not run for compatible package activation.' }
     Set-Item 'function:Stop-DreamSkinCodex' -Value {
       param($Codex, [int[]]$PreserveProcessIds, [switch]$AllowForce)
+    }
+    Set-Item 'function:Get-DreamSkinVerifiedCdpIdentity' -Value {
+      param($Port, $Codex)
+      return $null
     }
     Set-Item 'function:Get-DreamSkinCodexProcesses' -Value {
       return @(
@@ -972,11 +977,18 @@ try {
       throw 'An uninspectable package process was not kept on the conservative package-activation path.'
     }
     Set-Item 'function:Wait-DreamSkinCodexDebugArgumentStatus' -Value { param($Codex, $Port) return 'not-forwarded' }
-    $notForwardedLaunch = Start-DreamSkinCodexForDebugging -Codex $fakeInstall `
-      -Arguments @('--remote-debugging-port=9335') -Port 9335 -PreserveProcessIds @()
-    if ($notForwardedLaunch.Strategy -cne 'package-activation' -or
-      $notForwardedLaunch.ArgumentStatus -cne 'not-forwarded') {
-      throw 'A command-line observation without explicit protocol redirection triggered an unsafe fallback.'
+    $notForwardedReported = $false
+    $notForwardedCategory = $null
+    try {
+      $null = Start-DreamSkinCodexForDebugging -Codex $fakeInstall `
+        -Arguments @('--remote-debugging-port=9335') -Port 9335 -PreserveProcessIds @()
+    } catch {
+      $notForwardedReported = $_.Exception.Message.Contains('does not currently expose a supported Dream Skin CDP launch path') -and
+        $_.Exception.Message.Contains('without modifying the protected app package')
+      $notForwardedCategory = Get-DreamSkinStartFailureCategory -Exception $_.Exception
+    }
+    if (-not $notForwardedReported -or $notForwardedCategory -cne 'cdp-unsupported') {
+      throw 'A readable process without CDP argument forwarding did not fail closed with the unsupported capability category.'
     }
 
     $script:dreamSkinDebugStatusCall = 0
@@ -1013,7 +1025,7 @@ try {
         -Exception $_.Exception
     }
     if (-not $directArgumentFailureReported -or
-      $directArgumentFailureCategory -cne 'cdp-endpoint-unavailable') {
+      $directArgumentFailureCategory -cne 'cdp-unsupported') {
       throw 'A direct fallback that also dropped the CDP argument did not preserve its result category.'
     }
 
@@ -1397,7 +1409,8 @@ try {
       throw "Windows injector operation UI is missing: $requiredOperationUi"
     }
   }
-  if ([regex]::Matches($traySource, '-ExecutionPolicy RemoteSigned').Count -ne 2 -or
+  if ([regex]::Matches($traySource, '-ExecutionPolicy RemoteSigned').Count -ne 1 -or
+    -not $traySource.Contains("'-ExecutionPolicy', 'RemoteSigned'") -or
     $traySource.Contains('-ExecutionPolicy Bypass')) {
     throw 'Tray actions still bypass the PowerShell execution policy.'
   }
@@ -1562,6 +1575,7 @@ try {
   $projectRoot = Split-Path -Parent $Root
   & (Join-Path $PSScriptRoot 'reopen-recovery.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'start-recover-existing.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'official-launch-monitor.tests.ps1') -Root $Root
   $syncToolPath = Join-Path $projectRoot 'tools\sync-runtime-assets.mjs'
   $syncToolResult = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @($syncToolPath, '--check')
   if ($syncToolResult.ExitCode -ne 0) {
@@ -1600,8 +1614,20 @@ try {
     }
   }
   $commonSource = Read-DreamSkinUtf8File -Path (Join-Path $Root 'scripts\common-windows.ps1')
+  $traySource = Read-DreamSkinUtf8File -Path (Join-Path $Root 'scripts\tray-dream-skin.ps1')
   if (-not $commonSource.Contains('State was preserved.')) {
     throw 'Mismatched live injector identity does not fail closed with preserved state.'
+  }
+  if (-not $commonSource.Contains('function New-DreamSkinLaunchIntent') -or
+    -not $commonSource.Contains('function Test-DreamSkinLaunchIntentForCandidate') -or
+    -not $commonSource.Contains('function Test-DreamSkinOperationLockAvailable')) {
+    throw 'The Windows launcher is missing the short-lived launch-intent and operation-lock safety gates.'
+  }
+  if ($traySource.Contains("'-RestartExisting'") -or
+    -not $traySource.Contains('Get-DreamSkinVerifiedCdpIdentity') -or
+    -not $traySource.Contains('Read-DreamSkinLaunchIntent') -or
+    -not $traySource.Contains('Test-DreamSkinOperationLockAvailable')) {
+    throw 'The official launch monitor can still restart an ordinary Codex session or lacks the CDP/intent gate.'
   }
 
   $recordedInjectorFixture = Join-Path $temporaryRoot 'recorded-injector-fixture.mjs'

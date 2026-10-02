@@ -8,7 +8,7 @@ Codex Dream Skin 通过本机回环 CDP 给官方 Codex Windows 桌面应用加�
 
 ## 运行要求
 
-- Windows 10 或更高版本（x64；安装器声明 Windows 10 为最低版本）。
+- Windows 11 版本 21H2（build 22000）或更高版本（x64）。v1.5.20 不再支持 Windows 10。
 - 从 Microsoft Store 安装且已注册到当前用户的官方 `OpenAI.Codex` 应用。
 - Release Setup.exe 已内置 Node.js；只有从源码运行时才需要 `PATH` 中有 Node.js 22 或更高版本。
 - Windows PowerShell 5.1 或更高版本（安装器会在后台调用，普通用户不需要打开它）。
@@ -36,6 +36,8 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\install-
 - `Codex Dream Skin`：启动或重新应用皮肤。
 - `Codex Dream Skin - Tray`：打开系统托盘主题控制。
 - `Codex Dream Skin - Restore`：恢复官方外观并关闭已保存的 CDP 会话。
+
+托盘的官方启动监控现在只观察普通 Codex 启动，不会为了取得 CDP 而重启普通会话。只有 Dream Skin 启动器发起的受管启动，或已经拥有可信本机 CDP 端点的官方会话，才会自动接管。
 
 源码安装命令与日常快捷方式都使用 `RemoteSigned`，不会绕过系统或企业组策略。安装器会先校验运行时副本的 SHA-256，再仅对 `%LOCALAPPDATA%\CodexDreamSkin\engine` 中受管的 PowerShell 副本清除下载区标记。
 
@@ -136,6 +138,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\restore-
 | 已保存主题 | `%LOCALAPPDATA%\CodexDreamSkin\themes` |
 | 导入图片归档 | `%LOCALAPPDATA%\CodexDreamSkin\images` |
 | 会话状态 | `%LOCALAPPDATA%\CodexDreamSkin\state.json` |
+| 短期启动意图 | `%LOCALAPPDATA%\CodexDreamSkin\launch-intent.json` |
 | 注入器日志 | `%LOCALAPPDATA%\CodexDreamSkin\injector.log` |
 | 注入器错误日志 | `%LOCALAPPDATA%\CodexDreamSkin\injector-error.log` |
 | 验证日志 | `%LOCALAPPDATA%\CodexDreamSkin\verify.log` |
@@ -173,11 +176,13 @@ Get-AppxPackage -Name OpenAI.Codex
 
 ### 验证找不到 CDP 端点
 
-通过 `Codex Dream Skin` 快捷方式启动 Codex，再运行验证脚本。普通 Codex 启动方式不会打开 Dream Skin 所需的调试会话。
+通过 `Codex Dream Skin` 快捷方式启动 Codex，再运行验证脚本。普通 Codex 启动方式不会被强行重启；只有它本身已经打开并通过身份校验的 CDP 会话，托盘才会尝试附着。
 
 Codex Store `26.715.10079.0` 起，owl runtime 可能把应用包激活参数转换为 `codex://` 路径。当前启动器会识别这一行为，并对同一个已验证 Store 包内的精确 `ChatGPT.exe` 尝试一次原始参数回退；不会修改文件或 WindowsApps 权限。
 
 Issue #235 的实机结果已经确认两种独立失败：`26.715.10079.0` 的 WindowsApps ACL 会返回 `access-denied`；`26.721.3404.0` 可保留原始 CDP 参数，但 production runtime 仍不监听端口。两种结果都意味着当前 Codex/Windows 组合无法在项目安全边界内启用皮肤；该回退目前是安全诊断与回滚机制，不是对受影响 owl 版本的兼容性保证。不要接管 WindowsApps 所有权或修改官方包；请保留完整错误并关注 Issue #235 的上游兼容状态。
+
+如果官方进程能读取但没有转发调试参数，也没有可信监听器，启动结果会明确标记为 `cdp-unsupported`。这表示当前精确 Store 包未开放受支持的自动注入路径，不是永久版本黑名单；更新 Codex 后会重新探测。
 
 如果调试启动或可见渲染验证失败，启动器会先确认本轮启动的 Codex 已全部关闭，再只恢复本次改动且仍保持原值的外观键；较新的配置编辑会保留，不会被整份旧备份覆盖。marker/config 写入前会保存有界的 `preparing` 事务；进程被强制结束后，下次受锁操作会按写入前、预期写入值和当前值三方比较恢复。若无法确认 Codex 已关闭或安全完成恢复，一键换肤会保留当前主题文件和旧主题快照，不与仍在运行的应用竞争写入。此机制不代表受影响的官方 Codex 版本已经恢复 CDP 支持。
 

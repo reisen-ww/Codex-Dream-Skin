@@ -8,7 +8,13 @@ param(
   [ValidateRange(0, 300000)][int]$OperationLockTimeoutMilliseconds = 0,
   [switch]$RequireUnpaused,
   [ValidatePattern('^[a-f0-9]{32}$')][string]$ResultToken,
-  [switch]$RecoverExisting
+  [switch]$RecoverExisting,
+  [ValidateSet('dream-skin', 'official-auto', 'recovery')][string]$LaunchSource = 'dream-skin',
+  [string]$TargetPackageFullName,
+  [string]$TargetPackageFamilyName,
+  [string]$TargetPackageRoot,
+  [ValidateRange(0, 2147483647)][int]$TargetProcessId = 0,
+  [string]$TargetProcessStartedAt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +24,23 @@ $Injector = Join-Path $PSScriptRoot 'injector.mjs'
 . (Join-Path $PSScriptRoot 'common-windows.ps1')
 . (Join-Path $PSScriptRoot 'theme-windows.ps1')
 . (Join-Path $PSScriptRoot 'localization-windows.ps1')
+Assert-DreamSkinWindows11
+
+$targetIdentityRequested = -not [string]::IsNullOrWhiteSpace($TargetPackageFullName) -or
+  -not [string]::IsNullOrWhiteSpace($TargetPackageFamilyName) -or
+  -not [string]::IsNullOrWhiteSpace($TargetPackageRoot) -or
+  $TargetProcessId -gt 0 -or -not [string]::IsNullOrWhiteSpace($TargetProcessStartedAt)
+if ($targetIdentityRequested -and
+  ([string]::IsNullOrWhiteSpace($TargetPackageFullName) -or
+    [string]::IsNullOrWhiteSpace($TargetPackageFamilyName) -or
+    [string]::IsNullOrWhiteSpace($TargetPackageRoot) -or
+    $TargetProcessId -le 0 -or
+    [string]::IsNullOrWhiteSpace($TargetProcessStartedAt))) {
+  throw 'Automatic Codex takeover requires a complete package and process identity.'
+}
+if ($LaunchSource -ceq 'official-auto' -and -not $targetIdentityRequested) {
+  throw 'Official automatic takeover requires a bound Codex package and process identity.'
+}
 
 function Invoke-DreamSkinStartupAppearanceRecovery {
   param(
@@ -69,13 +92,23 @@ $operationLock = $null
 $startFailureCategory = 'internal-start-failure'
 $appearanceTransaction = $null
 $appearanceRecovery = 'not-needed'
+$launchIntentToken = $null
 try {
   $operationLock = Enter-DreamSkinOperationLock `
     -TimeoutMilliseconds $OperationLockTimeoutMilliseconds
   Assert-DreamSkinPort -Port $Port
   if ($ProfilePath) { $ProfilePath = [System.IO.Path]::GetFullPath($ProfilePath) }
   $node = Get-DreamSkinNodeRuntime
-  $currentCodex = Get-DreamSkinCodexInstall
+  $currentCodex = Resolve-DreamSkinCodexInstallForTarget -PackageFullName $TargetPackageFullName -PackageFamilyName $TargetPackageFamilyName -PackageRoot $TargetPackageRoot
+  if ($targetIdentityRequested) {
+    $targetRecords = @(Get-DreamSkinCodexMainProcessRecords -Codex $currentCodex | Where-Object {
+      [int]$_.ProcessId -eq $TargetProcessId -and
+        "$($_.StartedAt)" -ceq $TargetProcessStartedAt
+    })
+    if ($targetRecords.Count -ne 1) {
+      throw 'The official Codex process changed before automatic takeover could begin.'
+    }
+  }
   $codex = $currentCodex
   $language = Resolve-DreamSkinLanguage -StateRoot $StateRoot
   if ($RecoverExisting -and ($RestartExisting -or $PromptRestart)) {
@@ -138,6 +171,13 @@ try {
       $codex = $runningRegistered.Codex
       $codexToStop = $runningRegistered.Codex
     }
+  }
+  if ($LaunchSource -ceq 'official-auto' -and $null -eq $cdpIdentity -and
+    $null -eq (Read-DreamSkinLaunchIntent -StateRoot $StateRoot)) {
+    $startFailureCategory = 'cdp-unsupported'
+    throw (New-DreamSkinStartException -Category 'cdp-unsupported' `
+      -Message 'Automatic official-launch takeover requires either a Dream Skin launch intent or an already verified CDP endpoint. The ordinary Codex session was left untouched.' `
+      -InnerException $null)
   }
   $savedIsDifferent = [bool]($null -ne $savedCodex -and
     -not (Test-DreamSkinPathEqual -Left $savedCodex.Executable -Right $currentCodex.Executable))
@@ -277,6 +317,10 @@ try {
       $debugLaunchBaselineProcessIds = @(
         Get-DreamSkinCodexProcesses -Codex $codex | ForEach-Object { [int]$_.ProcessId }
       )
+      $launchIntent = New-DreamSkinLaunchIntent `
+        -StateRoot $StateRoot -Codex $codex -Port $Port `
+        -PreserveProcessIds $debugLaunchBaselineProcessIds
+      $launchIntentToken = "$($launchIntent.token)"
       $startFailureCategory = 'cdp-launch-failed'
       $debugLaunch = Start-DreamSkinCodexForDebugging -Codex $codex -Arguments $arguments `
         -Port $Port -PreserveProcessIds $debugLaunchBaselineProcessIds
@@ -528,6 +572,30 @@ try {
       pauseFile = $themePaths.PauseFile
       createdAt = (Get-Date).ToUniversalTime().ToString('o')
     }
+    # Schema 4 carries enough process provenance for the tray to distinguish a
+    # new official launch from a Chromium child or a reused PID. Keep the
+    # existing schema 3 shape as a conservative fallback for isolated legacy
+    # callers that cannot inspect Windows process metadata.
+    $sessionSource = if ($RecoverExisting) { 'recovery' } else { $LaunchSource }
+    $mainProcessRecord = $null
+    $listenerProcessRecord = $null
+    if (Get-Command Get-DreamSkinCodexMainProcessRecord -CommandType Function -ErrorAction SilentlyContinue) {
+      try {
+        $mainProcessRecord = Get-DreamSkinCodexMainProcessRecord -Codex $codex
+        $listenerProcessRecord = Get-DreamSkinCodexListenerProcessRecord -Port $Port -Codex $codex
+      } catch {
+        Write-Warning "Could not record complete Codex process provenance for the tray launch monitor: $($_.Exception.Message)"
+      }
+    }
+    if ($null -ne $mainProcessRecord -and $null -ne $listenerProcessRecord) {
+      $state.schemaVersion = 4
+      $state | Add-Member -NotePropertyName sessionId -NotePropertyValue ([guid]::NewGuid().ToString())
+      $state | Add-Member -NotePropertyName codexMainProcess -NotePropertyValue $mainProcessRecord
+      $state | Add-Member -NotePropertyName codexListenerProcess -NotePropertyValue $listenerProcessRecord
+      $state | Add-Member -NotePropertyName launchSource -NotePropertyValue $sessionSource
+      $state | Add-Member -NotePropertyName lastObservedAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString('o'))
+      $state | Add-Member -NotePropertyName watcherStatus -NotePropertyValue 'running'
+    }
     Write-DreamSkinState -Path $StatePath -State $state
 
     $startFailureCategory = 'renderer-verification-failed'
@@ -692,6 +760,7 @@ try {
     throw $startupError
   }
 
+  Set-DreamSkinDisabled -Disabled $false -StateRoot $StateRoot
   Write-Host "Codex Dream Skin is active on verified loopback port $Port."
   if ($ResultToken) {
     Write-DreamSkinStartResult -StateRoot $StateRoot -Token $ResultToken `
@@ -711,5 +780,10 @@ try {
   }
   throw $startError
 } finally {
+  if ($launchIntentToken) {
+    try { Remove-DreamSkinLaunchIntent -StateRoot $StateRoot -Token $launchIntentToken } catch {
+      Write-Warning 'Dream Skin could not remove its short-lived launch intent; it will expire automatically.'
+    }
+  }
   if ($null -ne $operationLock) { Exit-DreamSkinOperationLock -Mutex $operationLock }
 }

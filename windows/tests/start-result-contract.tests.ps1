@@ -101,7 +101,8 @@ try {
     'Wait-DreamSkinCodexDebugArgumentStatus',
     'Start-DreamSkinCodexDirect',
     'Stop-DreamSkinCodex',
-    'Get-DreamSkinCodexProcesses'
+    'Get-DreamSkinCodexProcesses',
+    'Get-DreamSkinVerifiedCdpIdentity'
   )
   $originalLauncherFunctions = @{}
   foreach ($functionName in $launcherFunctionNames) {
@@ -115,6 +116,7 @@ try {
       param($Codex, [int[]]$PreserveProcessIds, [switch]$AllowForce)
     }
     Set-Item 'function:Get-DreamSkinCodexProcesses' -Value { return @() }
+    Set-Item 'function:Get-DreamSkinVerifiedCdpIdentity' -Value { return $null }
     Set-Item 'function:Start-DreamSkinCodexDirect' -Value { return 202 }
     $script:startResultStatusCall = 0
     Set-Item 'function:Wait-DreamSkinCodexDebugArgumentStatus' -Value {
@@ -129,7 +131,7 @@ try {
     } catch {
       $notForwardedCategory = Get-DreamSkinStartFailureCategory -Exception $_.Exception
     }
-    if ($notForwardedCategory -cne 'cdp-endpoint-unavailable') {
+    if ($notForwardedCategory -cne 'cdp-unsupported') {
       throw 'A direct launch that dropped the CDP argument lost its bounded result category.'
     }
 

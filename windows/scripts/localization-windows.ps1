@@ -83,6 +83,8 @@ function Get-DreamSkinText {
   $catalog = @{
     'en-US' = @{
       StatusPaused = 'Status: Paused'; StatusRunning = 'Status: Running'; StatusStopped = 'Status: Stopped'
+      StatusStale = 'Status: Stale'; StatusBlocked = 'Status: Blocked'
+      OfficialLaunchMonitor = 'Monitor official Codex launches without restarting stock sessions'
       Apply = 'Apply or reapply'; Resume = 'Resume skin'; Pause = 'Pause skin'
       ChangeBackground = 'Change background image'; BackgroundTitle = 'Choose a Codex Dream Skin background image'
       BackgroundUpdated = 'Background image updated.'; ImportZip = 'Import theme ZIP...'
@@ -132,6 +134,7 @@ function Get-DreamSkinText {
       RecoveryUnconfirmed = 'The new theme did not enter verified active state.'
       RecoveryWorkRetained = 'The recovery work folder was retained and not deleted.'; DownloadCleaned = 'Temporary download files were cleaned up.'
       RollbackSnapshot = 'Rollback snapshot: {0}'; CommunityApplyFailed = 'One-click theme apply failed.'
+      CommunityStartCdpUnsupported = 'This Codex build did not expose a supported Dream Skin debugging launch path. The official session was left or restored without changing protected app files.'
       CommunityStartCdpLaunchFailed = 'The official Codex app could not be started with a debugging session.'
       CommunityStartCdpDirectAccessDenied = 'Windows denied direct launch of the validated Store executable after package activation dropped the debugging argument.'
       CommunityStartCdpEndpointUnavailable = 'This Codex build did not expose a verified local debugging endpoint.'
@@ -150,6 +153,8 @@ function Get-DreamSkinText {
     }
     'zh-CN' = @{
       StatusPaused = '状态：已暂停'; StatusRunning = '状态：运行中'; StatusStopped = '状态：未运行'
+      StatusStale = '状态：旧会话'; StatusBlocked = '状态：已阻止'
+      OfficialLaunchMonitor = '监测官方 Codex 启动（不重启普通会话）'
       Apply = '应用或重新应用'; Resume = '继续显示皮肤'; Pause = '暂停皮肤'
       ChangeBackground = '更换背景图'; BackgroundTitle = '选择 Codex Dream Skin 背景图'
       BackgroundUpdated = '背景图已更新。'; ImportZip = '导入主题 ZIP…'
@@ -199,6 +204,7 @@ function Get-DreamSkinText {
       RecoveryUnconfirmed = '新主题未写入已验证的活动状态。'
       RecoveryWorkRetained = '恢复工作目录已保留，未自动删除。'; DownloadCleaned = '下载临时文件已清理。'
       RollbackSnapshot = '回滚快照：{0}'; CommunityApplyFailed = '一键换肤失败。'
+      CommunityStartCdpUnsupported = '当前 Codex 版本没有开放受 Dream Skin 支持的调试启动路径。官方会话已保留或恢复，未修改受保护的应用文件。'
       CommunityStartCdpLaunchFailed = '官方 Codex 应用无法以调试会话启动。'
       CommunityStartCdpDirectAccessDenied = '应用包启动丢失调试参数后，Windows 拒绝直接启动已验证的 Store 可执行文件。'
       CommunityStartCdpEndpointUnavailable = '当前 Codex 版本没有开放可验证的本地调试端点。'

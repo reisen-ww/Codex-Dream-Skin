@@ -431,10 +431,18 @@ export async function runRendererRuntimeTest(assetRoot) {
   assert.match(css, /main:is\(\.main-surface, \[data-app-shell-main-surface\], \[class\*=\"_MainContentSurface_\"\]\):has\(\[role="main"\]\)/);
   assert.match(css, /main:is\(\.main-surface, \[data-app-shell-main-surface\], \[class\*=\"_MainContentSurface_\"\]\):not\(:has\(\[role="main"\]\)\)/);
   assert.match(css, /header:is\(\.app-header-tint, \[data-app-shell-header-edge-scroll\], \[class\*=\"_Header_\"\]\)/);
+  const topFadeRule = css.match(
+    /:is\(\.app-shell-main-content-top-fade, \[data-app-shell-main-content-top-fade\], \[class\*="_MainContentTopFade_"\]\)\s*\{([^}]*)\}/,
+  )?.[1] ?? "";
   assert.match(
-    css,
-    /:is\(\.app-shell-main-content-top-fade, \[data-app-shell-main-content-top-fade\], \[class\*=\"_MainContentTopFade_\"\]\):not\(\[data-app-shell-main-content-top-fade\]\)/,
-    "The 26.924 data attribute may identify the fade contract, but its content wrapper must be excluded from the hide rule.",
+    topFadeRule,
+    /background:\s*transparent !important;[\s\S]*background-image:\s*none !important;/,
+    "The 26.928 top-fade wrapper must keep layout geometry while clearing its paint.",
+  );
+  assert.doesNotMatch(
+    topFadeRule,
+    /display:\s*none/,
+    "The 26.928 wrapper carrying transcript and composer must never be hidden.",
   );
   assert.match(css, /body > div > \[class\*="_PageSurfaceLayout_"\] \{\s*background: transparent !important;/,
     "The 26.924 outer page surface must not wash out the selected artwork.");

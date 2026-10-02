@@ -8,7 +8,7 @@ Codex Dream Skin loads an external theme into the official Codex Windows desktop
 
 ## Requirements
 
-- Windows 10 or newer on x64 (the installer declares Windows 10 as its minimum).
+- Windows 11 version 21H2 (build 22000) or newer on x64. v1.5.20 no longer supports Windows 10.
 - The official `OpenAI.Codex` app installed from Microsoft Store and registered for the current user.
 - Release Setup.exe bundles Node.js. Only source-based use needs Node.js 22 or
   newer on `PATH`.
@@ -43,6 +43,8 @@ The installer validates the official Codex Store package and Node.js, saves a re
 - `Codex Dream Skin`: launch or reapply the skin.
 - `Codex Dream Skin - Tray`: open the system tray theme controls.
 - `Codex Dream Skin - Restore`: restore the stock appearance and close the saved CDP session.
+
+The official-launch monitor now observes ordinary Codex launches without restarting them to obtain CDP. It may attach only to a managed Dream Skin launch or to an official session that already owns a verified loopback CDP endpoint.
 
 Source-install commands and daily shortcuts both use `RemoteSigned`, so they do not override system or enterprise Group Policy. The installer verifies the runtime copy with SHA-256, then clears download-zone markers only from managed PowerShell copies under `%LOCALAPPDATA%\CodexDreamSkin\engine`.
 
@@ -160,6 +162,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\restore-
 | Saved themes | `%LOCALAPPDATA%\CodexDreamSkin\themes` |
 | Imported image archive | `%LOCALAPPDATA%\CodexDreamSkin\images` |
 | Session state | `%LOCALAPPDATA%\CodexDreamSkin\state.json` |
+| Short-lived launch intent | `%LOCALAPPDATA%\CodexDreamSkin\launch-intent.json` |
 | Injector log | `%LOCALAPPDATA%\CodexDreamSkin\injector.log` |
 | Injector error log | `%LOCALAPPDATA%\CodexDreamSkin\injector-error.log` |
 | Verification log | `%LOCALAPPDATA%\CodexDreamSkin\verify.log` |
@@ -197,11 +200,13 @@ When `-Port` is omitted, the launcher searches for a free port beginning at `933
 
 ### Verification cannot find a CDP endpoint
 
-Launch Codex through the `Codex Dream Skin` shortcut, then run verification. A normal Codex launch does not open the debug session used by Dream Skin.
+Launch Codex through the `Codex Dream Skin` shortcut, then run verification. A normal Codex launch is never force-restarted just to obtain CDP; the tray attaches only when that session already exposes a verified debugging endpoint.
 
 Starting with Codex Store `26.715.10079.0`, the owl runtime may convert package-activation arguments into a `codex://` path. The launcher detects that behavior and makes one raw-argument fallback attempt against the exact `ChatGPT.exe` in the same validated Store package; it does not change files or WindowsApps permissions.
 
 Field results in issue #235 now confirm two independent failures: WindowsApps returns `access-denied` for direct launch on `26.715.10079.0`, while `26.721.3404.0` retains the raw CDP arguments but its production runtime still opens no listener. Either result means that Codex/Windows combination cannot enable the skin within the project's safety boundary. The fallback is currently a safe diagnostic and rollback path, not a compatibility guarantee for affected owl builds. Do not take ownership of WindowsApps or patch the official package; keep the complete error and follow issue #235 for upstream compatibility status.
+
+When the official process is readable but does not forward the debugging argument and exposes no verified listener, the bounded result is `cdp-unsupported`. This describes the exact Store package's current capability and is re-probed after a Codex update; it is not a permanent version blacklist.
 
 If debug launch or visible renderer verification fails, the launcher first confirms that every Codex process started by this attempt is closed, then restores only this attempt's appearance-key values that are still unchanged. Newer config edits are preserved instead of replacing the whole file from an old backup. A bounded `preparing` transaction is saved before the marker/config commits; after a forced process termination, the next locked operation recovers by comparing the before, intended, and current values. If Codex cannot be confirmed closed or recovery cannot finish safely, one-click apply preserves the current theme files and exact prior-theme snapshot rather than racing the running app. This mechanism is not evidence that an affected official Codex build has restored CDP support.
 

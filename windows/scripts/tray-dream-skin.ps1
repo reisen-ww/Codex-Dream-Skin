@@ -1,5 +1,9 @@
 ﻿[CmdletBinding()]
-param([int]$Port = 9335)
+param(
+  [int]$Port = 9335,
+  [Alias('NoAutoAttach')][switch]$DisableOfficialLaunchMonitor,
+  [switch]$EnableOfficialLaunchMonitor
+)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
@@ -8,8 +12,11 @@ Add-Type -AssemblyName Microsoft.VisualBasic
 . (Join-Path $PSScriptRoot 'localization-windows.ps1')
 . (Join-Path $PSScriptRoot 'common-windows.ps1')
 . (Join-Path $PSScriptRoot 'theme-windows.ps1')
+Assert-DreamSkinWindows11
 
 Assert-DreamSkinPort -Port $Port
+$PortExplicit = $PSBoundParameters.ContainsKey('Port')
+$PortFromState = $false
 $SkillRoot = Split-Path -Parent $PSScriptRoot
 $StateRoot = Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'
 $paths = $null
@@ -29,6 +36,31 @@ $recoveryMonitor = @{
   Process = $null
   NextAttemptAt = [datetime]::MinValue
 }
+$officialLaunchMonitor = @{
+  Enabled = $true
+  Baseline = @{}
+  BaselineInitialized = $false
+  Seen = @{}
+  Pending = @{}
+  Process = $null
+  CandidateKey = $null
+  Candidate = $null
+  ResultToken = $null
+  NextAttemptAt = [datetime]::MinValue
+}
+if ($DisableOfficialLaunchMonitor -and $EnableOfficialLaunchMonitor) {
+  throw 'Choose either -DisableOfficialLaunchMonitor or -EnableOfficialLaunchMonitor, not both.'
+}
+if ($DisableOfficialLaunchMonitor -or $EnableOfficialLaunchMonitor) {
+  $toggleLock = Enter-DreamSkinOperationLock
+  try {
+    Set-DreamSkinOfficialLaunchMonitorEnabled -Enabled:(-not $DisableOfficialLaunchMonitor) -StateRoot $StateRoot
+  } finally {
+    Exit-DreamSkinOperationLock -Mutex $toggleLock
+  }
+  $mutex.Dispose()
+  exit 0
+}
 try {
   try { $acquired = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $acquired = $true }
   if (-not $acquired) { exit 0 }
@@ -36,6 +68,19 @@ try {
   $initializationLock = Enter-DreamSkinOperationLock
   try {
     $paths = Initialize-DreamSkinThemeStore -SkillRoot $SkillRoot -StateRoot $StateRoot
+    $existingState = $null
+    try { $existingState = Read-DreamSkinState -Path $paths.State } catch {}
+    if (-not $PortExplicit -and $null -ne $existingState -and $existingState.port) {
+      $Port = [int]$existingState.port
+      Assert-DreamSkinPort -Port $Port
+      $PortFromState = $true
+    }
+    if ($DisableOfficialLaunchMonitor) {
+      Set-DreamSkinOfficialLaunchMonitorEnabled -Enabled $false -StateRoot $StateRoot
+    } elseif ($EnableOfficialLaunchMonitor) {
+      Set-DreamSkinOfficialLaunchMonitorEnabled -Enabled $true -StateRoot $StateRoot
+    }
+    $officialLaunchMonitor.Enabled = Test-DreamSkinOfficialLaunchMonitorEnabled -StateRoot $StateRoot
   } finally {
     Exit-DreamSkinOperationLock -Mutex $initializationLock
   }
@@ -80,7 +125,7 @@ try {
     )
     $scriptToken = ConvertTo-DreamSkinProcessArgument -Value $Script
     $argumentLine = '-NoProfile -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File ' + $scriptToken
-    if ($Arguments.Count -gt 0) { $argumentLine += ' ' + ($Arguments -join ' ') }
+    if ($Arguments.Count -gt 0) { $argumentLine += ' ' + (ConvertTo-DreamSkinArgumentLine -Arguments $Arguments) }
     $previousLanguage = $env:DREAMSKIN_LANG
     try {
       $env:DREAMSKIN_LANG = Resolve-DreamSkinLanguage -StateRoot $StateRoot
@@ -92,7 +137,226 @@ try {
     }
   }
 
+  function Get-DreamSkinTrayStartArguments {
+    param(
+      [AllowEmptyCollection()][string[]]$AdditionalArguments = @(),
+      [switch]$ForcePort
+    )
+    $arguments = @()
+    if ($ForcePort -or $PortExplicit -or $PortFromState) {
+      $arguments += @('-Port', "$Port")
+    }
+    return @($arguments + $AdditionalArguments)
+  }
+
+  function Get-DreamSkinTrayOfficialProcessSnapshot {
+    try {
+      $observed = @(Get-DreamSkinRegisteredCodexMainProcessRecords)
+      $records = @{}
+      foreach ($item in $observed) {
+        $key = ConvertTo-DreamSkinProcessIdentityKey -ProcessRecord $item.Process
+        $records[$key] = $item
+      }
+      return [pscustomobject]@{ Ready = $true; Observed = $observed; Records = $records }
+    } catch {
+      return [pscustomobject]@{ Ready = $false; Observed = @(); Records = @{} }
+    }
+  }
+
+  function Update-DreamSkinTrayOfficialProcessBaseline {
+    $snapshot = Get-DreamSkinTrayOfficialProcessSnapshot
+    if ($snapshot.Ready) {
+      $officialLaunchMonitor.Baseline = $snapshot.Records
+      $officialLaunchMonitor.BaselineInitialized = $true
+    }
+    return $snapshot
+  }
+
+  function Test-DreamSkinTrayOfficialLaunchEligibility {
+    try {
+      $active = Read-DreamSkinTheme -ThemeDirectory $paths.Active -SkipImageMetadata
+      $themeReady = $null -ne $active -and $null -ne $active.Theme -and
+        -not [string]::IsNullOrWhiteSpace("$($active.Theme.name)")
+      return $officialLaunchMonitor.Enabled -and
+        (Test-DreamSkinOfficialLaunchMonitorState -StatePath $paths.State `
+          -ThemeReady $themeReady -Paused:(Test-DreamSkinPaused -StateRoot $StateRoot))
+    } catch {
+      return $false
+    }
+  }
+
+  function Invoke-DreamSkinTrayOfficialLaunchMonitor {
+    if ($null -ne $recoveryMonitor.Process) {
+      try {
+        if (-not $recoveryMonitor.Process.HasExited) { return }
+        $recoveryMonitor.Process.Dispose()
+      } catch {}
+      $recoveryMonitor.Process = $null
+      $null = Update-DreamSkinTrayOfficialProcessBaseline
+      $officialLaunchMonitor.NextAttemptAt = (Get-Date).AddSeconds(5)
+      return
+    }
+    if ($null -ne $officialLaunchMonitor.Process) {
+      $completedProcess = $officialLaunchMonitor.Process
+      $completedKey = $officialLaunchMonitor.CandidateKey
+      $completedToken = $officialLaunchMonitor.ResultToken
+      $succeeded = $false
+      try {
+        if (-not $completedProcess.HasExited) { return }
+        if ($completedToken) {
+          try {
+            $result = Read-DreamSkinStartResult -StateRoot $StateRoot -Token $completedToken
+            $succeeded = "$($result.outcome)" -ceq 'success'
+          } catch {}
+          Remove-Item -LiteralPath (Get-DreamSkinStartResultPath -StateRoot $StateRoot -Token $completedToken) -Force -ErrorAction SilentlyContinue
+        } else {
+          $succeeded = $completedProcess.ExitCode -eq 0
+        }
+        $completedProcess.Dispose()
+      } catch {}
+      $officialLaunchMonitor.Process = $null
+      $officialLaunchMonitor.CandidateKey = $null
+      $officialLaunchMonitor.Candidate = $null
+      $officialLaunchMonitor.ResultToken = $null
+      if ($succeeded -and $completedKey) {
+        $officialLaunchMonitor.Seen[$completedKey] = $true
+        while ($officialLaunchMonitor.Seen.Count -gt 64) {
+          $oldest = @($officialLaunchMonitor.Seen.Keys | Select-Object -First 1)
+          if ($oldest.Count -eq 0) { break }
+          $officialLaunchMonitor.Seen.Remove($oldest[0])
+        }
+        $null = Update-DreamSkinTrayOfficialProcessBaseline
+      }
+      $officialLaunchMonitor.NextAttemptAt = (Get-Date).AddSeconds($(if ($succeeded) { 5 } else { 30 }))
+      return
+    }
+
+    $markerEnabled = Test-DreamSkinOfficialLaunchMonitorEnabled -StateRoot $StateRoot
+    if ($markerEnabled -ne $officialLaunchMonitor.Enabled) {
+      $officialLaunchMonitor.Enabled = $markerEnabled
+      $officialLaunchMonitor.Baseline = @{}
+      $officialLaunchMonitor.BaselineInitialized = $false
+      $officialLaunchMonitor.Seen = @{}
+      $officialLaunchMonitor.Pending = @{}
+    }
+    if (-not $officialLaunchMonitor.Enabled) { return }
+
+    $now = Get-Date
+    if ($now -lt $officialLaunchMonitor.NextAttemptAt) { return }
+    $snapshot = Get-DreamSkinTrayOfficialProcessSnapshot
+    if (-not $snapshot.Ready) { return }
+    if (-not $officialLaunchMonitor.BaselineInitialized) {
+      $officialLaunchMonitor.Baseline = $snapshot.Records
+      $officialLaunchMonitor.BaselineInitialized = $true
+      return
+    }
+
+    $observation = Get-DreamSkinOfficialLaunchObservation `
+      -Baseline $officialLaunchMonitor.Baseline -Observed $snapshot.Observed
+    $candidates = @($observation.Candidates | Where-Object {
+      $key = ConvertTo-DreamSkinProcessIdentityKey -ProcessRecord $_.Process
+      -not $officialLaunchMonitor.Seen.ContainsKey($key)
+    })
+    if ($candidates.Count -eq 0) {
+      $officialLaunchMonitor.Baseline = $observation.Current
+      return
+    }
+
+    # Multiple simultaneous Store versions or multiple root processes are
+    # ambiguous. Keep the official app untouched and consume this observation.
+    if ($observation.Ambiguous) {
+      foreach ($candidate in $candidates) {
+        $key = ConvertTo-DreamSkinProcessIdentityKey -ProcessRecord $candidate.Process
+        $officialLaunchMonitor.Seen[$key] = $true
+      }
+      $officialLaunchMonitor.Baseline = $observation.Current
+      return
+    }
+
+    if (-not (Test-DreamSkinTrayOfficialLaunchEligibility)) {
+      $key = ConvertTo-DreamSkinProcessIdentityKey -ProcessRecord $candidates[0].Process
+      $officialLaunchMonitor.Seen[$key] = $true
+      $officialLaunchMonitor.Baseline = $observation.Current
+      return
+    }
+
+    $candidate = $candidates[0]
+    $candidateKey = ConvertTo-DreamSkinProcessIdentityKey -ProcessRecord $candidate.Process
+    $launchIntent = Read-DreamSkinLaunchIntent -StateRoot $StateRoot
+    $intentMatches = Test-DreamSkinLaunchIntentForCandidate `
+      -Intent $launchIntent -Candidate $candidate -Port $Port
+    $verifiedIdentity = $null
+    try {
+      $verifiedIdentity = Get-DreamSkinVerifiedCdpIdentity -Port $Port -Codex $candidate.Codex
+    } catch {}
+
+    # A normal Codex launch is never restarted just to obtain CDP. A managed
+    # Dream Skin launch is already being handled by start-dream-skin.ps1 while
+    # it owns the operation lock; let that operation finish instead of
+    # starting a second takeover process. An independently launched Codex may
+    # be attached only when it already owns a verified loopback endpoint.
+    $activeState = $null
+    try { $activeState = Read-DreamSkinState -Path $paths.State } catch {}
+    if ($null -ne $activeState -and $null -ne $activeState.codexMainProcess -and
+      (Test-DreamSkinCodexProcessIdentity -Recorded $activeState.codexMainProcess -Current $candidate.Process)) {
+      $officialLaunchMonitor.Pending.Remove($candidateKey)
+      $officialLaunchMonitor.Seen[$candidateKey] = $true
+      $officialLaunchMonitor.Baseline = $observation.Current
+      return
+    }
+    if ($intentMatches -and -not (Test-DreamSkinOperationLockAvailable)) {
+      $officialLaunchMonitor.NextAttemptAt = $now.AddSeconds(5)
+      return
+    }
+    if ($null -eq $verifiedIdentity) {
+      $retryUntil = $officialLaunchMonitor.Pending[$candidateKey]
+      if ($null -eq $retryUntil) {
+        $retryUntil = $now.AddSeconds(30)
+        $officialLaunchMonitor.Pending[$candidateKey] = $retryUntil
+      }
+      if ($now -lt $retryUntil) {
+        $officialLaunchMonitor.NextAttemptAt = $now.AddSeconds(2)
+        return
+      }
+      $officialLaunchMonitor.Pending.Remove($candidateKey)
+      $officialLaunchMonitor.Seen[$candidateKey] = $true
+      $officialLaunchMonitor.Baseline = $observation.Current
+      return
+    }
+    $officialLaunchMonitor.Pending.Remove($candidateKey)
+    if (-not (Test-DreamSkinOperationLockAvailable)) {
+      $officialLaunchMonitor.NextAttemptAt = $now.AddSeconds(5)
+      return
+    }
+    $resultToken = [guid]::NewGuid().ToString('N')
+    try {
+      $targetArguments = @(
+        '-LaunchSource', 'official-auto',
+        '-ResultToken', $resultToken,
+        '-TargetPackageFullName', "$($candidate.Codex.PackageFullName)",
+        '-TargetPackageFamilyName', "$($candidate.Codex.PackageFamilyName)",
+        '-TargetPackageRoot', "$($candidate.Codex.PackageRoot)",
+        '-TargetProcessId', "$($candidate.Process.ProcessId)",
+        '-TargetProcessStartedAt', "$($candidate.Process.StartedAt)"
+      )
+      $officialLaunchMonitor.Process = Start-DreamSkinPowerShell -Script $startScript -Arguments (Get-DreamSkinTrayStartArguments -AdditionalArguments $targetArguments) -PassThru
+      $officialLaunchMonitor.CandidateKey = $candidateKey
+      $officialLaunchMonitor.Candidate = $candidate
+      $officialLaunchMonitor.ResultToken = $resultToken
+      $officialLaunchMonitor.NextAttemptAt = $now.AddSeconds(30)
+    } catch {
+      $officialLaunchMonitor.Process = $null
+      $officialLaunchMonitor.CandidateKey = $null
+      $officialLaunchMonitor.Candidate = $null
+      $officialLaunchMonitor.ResultToken = $null
+      $officialLaunchMonitor.NextAttemptAt = $now.AddSeconds(30)
+    }
+  }
+
   function Invoke-DreamSkinTrayRecovery {
+    if ($null -ne $officialLaunchMonitor.Process) {
+      try { if (-not $officialLaunchMonitor.Process.HasExited) { return } } catch {}
+    }
     if (Test-DreamSkinPaused -StateRoot $StateRoot) { return }
     if ($null -ne $recoveryMonitor.Process) {
       try {
@@ -100,6 +364,9 @@ try {
         $recoveryMonitor.Process.Dispose()
       } catch {}
       $recoveryMonitor.Process = $null
+      $null = Update-DreamSkinTrayOfficialProcessBaseline
+      $officialLaunchMonitor.NextAttemptAt = (Get-Date).AddSeconds(5)
+      return
     }
 
     $now = Get-Date
@@ -173,12 +440,16 @@ try {
     param([Parameter(Mandatory = $true)][bool]$Enabled)
     if (-not $Enabled) {
       Remove-Item -LiteralPath $startupShortcut -Force -ErrorAction SilentlyContinue
+      Set-DreamSkinAutoStartDisabled -Disabled $true -StateRoot $StateRoot
       return
     }
+    Set-DreamSkinAutoStartDisabled -Disabled $false -StateRoot $StateRoot
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($startupShortcut)
     $shortcut.TargetPath = $powershell
-    $shortcut.Arguments = "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File `"$PSScriptRoot\tray-dream-skin.ps1`""
+    $startupArguments = @('-NoProfile', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'RemoteSigned', '-File', (Join-Path $PSScriptRoot 'tray-dream-skin.ps1'))
+    if ($PortExplicit -or $PortFromState) { $startupArguments += @('-Port', "$Port") }
+    $shortcut.Arguments = ConvertTo-DreamSkinArgumentLine -Arguments $startupArguments
     $shortcut.WorkingDirectory = $SkillRoot
     $shortcut.Description = 'Start Codex Dream Skin in the notification area'
     $shortcut.Save()
@@ -191,17 +462,35 @@ try {
     try { $state = Read-DreamSkinState -Path $paths.State } catch {}
     $active = $null
     try { $active = Read-DreamSkinTheme -ThemeDirectory $paths.Active -SkipImageMetadata } catch {}
+    $stateStatus = Get-DreamSkinStateStatus -Path $paths.State
     $status = if ($paused) {
       Get-DreamSkinTrayText -Key 'StatusPaused'
-    } elseif ($state) {
-      Get-DreamSkinTrayText -Key 'StatusRunning'
     } else {
-      Get-DreamSkinTrayText -Key 'StatusStopped'
+      switch ($stateStatus) {
+        'running' { Get-DreamSkinTrayText -Key 'StatusRunning'; break }
+        'stale' { Get-DreamSkinTrayText -Key 'StatusStale'; break }
+        'blocked' { Get-DreamSkinTrayText -Key 'StatusBlocked'; break }
+        default { Get-DreamSkinTrayText -Key 'StatusStopped'; break }
+      }
     }
     if ($null -ne $active -and $null -ne $active.Theme -and $active.Theme.name) {
       $status += " · $($active.Theme.name)"
     }
     $null = Add-DreamSkinTrayItem -Items $menu.Items -Text $status -Action $null -Enabled $false
+    [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
+    $officialMonitorEnabled = Test-DreamSkinOfficialLaunchMonitorEnabled -StateRoot $StateRoot
+    $officialMonitorAction = {
+      $next = -not (Test-DreamSkinOfficialLaunchMonitorEnabled -StateRoot $StateRoot)
+      Set-DreamSkinOfficialLaunchMonitorEnabled -Enabled $next -StateRoot $StateRoot
+      $officialLaunchMonitor.Enabled = $next
+      $officialLaunchMonitor.Baseline = @{}
+      $officialLaunchMonitor.BaselineInitialized = $false
+      $officialLaunchMonitor.Seen = @{}
+      Rebuild-DreamSkinTrayMenu
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $menu.Items -Text (Get-DreamSkinTrayText -Key 'OfficialLaunchMonitor') `
+      -Action $officialMonitorAction -Checked $officialMonitorEnabled
+
     [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
 
     $null = Add-DreamSkinTrayItem -Items $menu.Items -Text (Get-DreamSkinTrayText -Key 'Apply') -Action {
@@ -210,7 +499,7 @@ try {
       if ($null -ne $session) {
         $begin = Show-DreamSkinOperationUi -Session $session -Phase begin -Kind apply -TimeoutMs 3000
       }
-      Start-DreamSkinPowerShell -Script $startScript -Arguments @('-Port', "$Port", '-PromptRestart')
+      Start-DreamSkinPowerShell -Script $startScript -Arguments (Get-DreamSkinTrayStartArguments -AdditionalArguments @('-PromptRestart'))
       # start-dream-skin is async; close the in-window loading so it does not stick for 180s.
       if ($null -ne $session -and $null -ne $begin -and $begin.Ok) {
         $null = Show-DreamSkinOperationUi -Session $session -Phase finish -Token $begin.Token `
@@ -229,7 +518,7 @@ try {
         if ($null -ne $session) {
           $begin = Show-DreamSkinOperationUi -Session $session -Phase begin -Kind apply -TimeoutMs 3000
         }
-        Start-DreamSkinPowerShell -Script $startScript -Arguments @('-Port', "$Port", '-PromptRestart')
+        Start-DreamSkinPowerShell -Script $startScript -Arguments (Get-DreamSkinTrayStartArguments -AdditionalArguments @('-PromptRestart'))
         if ($null -ne $session -and $null -ne $begin -and $begin.Ok) {
           $null = Show-DreamSkinOperationUi -Session $session -Phase finish -Token $begin.Token `
           -UiState success -Message (Get-DreamSkinTrayText -Key 'ResumeStarted') -TimeoutMs 1500
@@ -404,8 +693,8 @@ try {
     Add-DreamSkinTrayLanguageMenu
     [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
     $null = Add-DreamSkinTrayItem -Items $menu.Items -Text (Get-DreamSkinTrayText -Key 'Restore') -Action {
-      Start-DreamSkinPowerShell -Script $restoreScript -Arguments @(
-        '-Port', "$Port", '-RestoreBaseTheme', '-PromptRestart'
+      Start-DreamSkinPowerShell -Script $restoreScript -Arguments (
+        Get-DreamSkinTrayStartArguments -AdditionalArguments @('-RestoreBaseTheme', '-PromptRestart')
       )
       $notify.Visible = $false
       [System.Windows.Forms.Application]::Exit()
@@ -416,10 +705,11 @@ try {
     }
   }
 
+  $null = Update-DreamSkinTrayOfficialProcessBaseline
   $menu.add_Opening({ Rebuild-DreamSkinTrayMenu })
   $notify.add_DoubleClick({
     try {
-      Start-DreamSkinPowerShell -Script $startScript -Arguments @('-Port', "$Port", '-PromptRestart')
+      Start-DreamSkinPowerShell -Script $startScript -Arguments (Get-DreamSkinTrayStartArguments -AdditionalArguments @('-PromptRestart'))
     } catch {
       Show-DreamSkinTrayError -Message $_.Exception.Message
     }
@@ -432,6 +722,11 @@ try {
     } catch {
       $recoveryMonitor.NextAttemptAt = (Get-Date).AddSeconds(30)
     }
+    try {
+      Invoke-DreamSkinTrayOfficialLaunchMonitor
+    } catch {
+      $officialLaunchMonitor.NextAttemptAt = (Get-Date).AddSeconds(30)
+    }
   })
   $recoveryTimer.Start()
   [System.Windows.Forms.Application]::Run()
@@ -442,6 +737,9 @@ try {
   }
   if ($null -ne $recoveryMonitor.Process) {
     try { $recoveryMonitor.Process.Dispose() } catch {}
+  }
+  if ($null -ne $officialLaunchMonitor.Process) {
+    try { $officialLaunchMonitor.Process.Dispose() } catch {}
   }
   if ($null -ne $notify) { $notify.Dispose() }
   if ($null -ne $trayIcon) { $trayIcon.Dispose() }
